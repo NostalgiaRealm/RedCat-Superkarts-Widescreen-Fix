@@ -1,271 +1,276 @@
-# Technical notes: Redcat Superkarts `rcskspel.dat` widescreen + FPS patch
+# Technical notes: Redcat Superkarts `rcskspel.dat` aspect-ratio Hor+ + FPS patch
 
-This document explains how the Redcat Superkarts racing executable, `rcskspel.dat`, was modified so the game can render correctly on a 16:9 display without horizontally stretching the 3D world.
-
-The patcher created for this project is:
+This document explains how the latest Redcat Superkarts patcher works:
 
 ```text
-RedcatSuperkartsWidescreenFPSPatcher.exe
+RedcatSuperkartsAspectRatioHorPlusFPSPatcher_release
 ```
 
-The game file it patches is:
+The patcher modifies the racing executable used by Redcat Superkarts:
 
 ```text
 rcskspel.dat
 ```
 
-Even though the extension is `.dat`, `rcskspel.dat` is a normal Windows PE executable. It is launched by the game’s menu executable and contains the DirectDraw/Direct3D racing portion of the game.
+Even though the file extension is `.dat`, `rcskspel.dat` is a Windows PE executable. The game menu launches this file to run the DirectDraw/Direct3D racing portion of the game.
 
-## Goal of the patch
+## What the latest patcher does
 
-The original game is built around 4:3-era display modes and appears to run at roughly 31/32 FPS by default.
+The latest patcher applies two fixes:
 
-The final patch does three things:
+1. **Aspect-ratio-aware Hor+ 3D correction**
+2. **Unlocked FPS / 0 ms wait patch**
 
-1. patches the game’s internal display-mode table to the requested resolution, such as `2560x1440`;
-2. patches the Direct3D horizontal clip range so the 3D world becomes proper **Hor+ widescreen** instead of stretched;
-3. removes the old 25 ms frame limiter by setting it to `0 ms`, producing the same behavior as the working unlocked-FPS test build.
+It intentionally **does not patch the game’s internal resolution table** anymore.
 
-## What “Hor+” means
+Earlier testing showed that changing the display-mode table did not meaningfully affect the actual output resolution in the tested setup. The confirmed useful patches were:
 
-The correct widescreen behavior is:
+```text
+Direct3D horizontal clip range
+FPS wait threshold
+```
+
+If you need to force the actual output resolution, use an external method such as dgVoodoo2 or another DirectDraw/Direct3D wrapper. This patcher controls the 3D aspect behavior, not the game’s output-resolution selection.
+
+## Why aspect-ratio patching is needed
+
+The original game was built around a 4:3 view.
+
+If the old 4:3 frame is simply stretched to fill a widescreen output, the 3D image becomes too wide. Karts, roads, and world geometry look horizontally distorted.
+
+The correct behavior is **Hor+**:
 
 ```text
 Original 4:3:
   normal vertical view
   limited horizontal view
 
-Patched 16:9:
+Patched widescreen:
   same vertical view
   wider horizontal view
 ```
 
-This is called **Hor+**.
+The patcher achieves this by expanding the Direct3D horizontal clip range while leaving the vertical range alone.
 
-The incorrect behavior would be simply stretching the old 4:3 image to fill 16:9. That makes the 3D world look wide and distorted. The patch avoids that by expanding the horizontal Direct3D clip range while leaving the vertical clip range alone.
+## Formula used by the patcher
 
-## Important discovery during testing
-
-Several earlier attempts only affected the HUD or the 2D overlay. Those did not change the 3D road/karts/world.
-
-The successful path was found by changing the Direct3D viewport clip values. The important test result was:
-
-- changing the vertical clip value caused vertical zoom/cropping;
-- changing the horizontal clip range expanded the 3D view correctly;
-- the working versions were known as the **T** and **U** Hor+ builds;
-- the patcher uses the **U-style default + runtime horizontal clip range** approach.
-
-## PE layout notes
-
-For this executable, file offsets are used directly by the patcher. The values below are file offsets, not virtual addresses.
-
-If you are viewing the file in a disassembler, the corresponding virtual addresses may depend on the executable image base and section mapping. In a hex editor, use the file offsets exactly as listed.
-
-## Patch part 1: resolution / display-mode table
-
-The game stores several display-mode table entries as 32-bit little-endian integers.
-
-The patcher writes the user-specified width and height into the relevant table entries.
-
-### Width offsets
+The original game is treated as a 4:3 game:
 
 ```text
-0x0FE930
-0x0FE984
-0x0FE9FC
-0x0FEA9C
+baseAspect = 4 / 3 = 1.3333333...
 ```
 
-### Height offsets
+The user enters a target aspect ratio, for example:
 
 ```text
-0x0FE934
-0x0FE988
-0x0FEA00
-0x0FEAA0
+16:9
+16:10
+21:9
+32:9
+1.7777
+2.3333
 ```
 
-### Example: 2560×1440
-
-For `2560x1440`, write:
+The patcher calculates:
 
 ```text
-2560 decimal = 0x00000A00
-little endian = 00 0A 00 00
+Hor+ multiplier = targetAspect / baseAspect
 ```
 
-and:
-
-```text
-1440 decimal = 0x000005A0
-little endian = A0 05 00 00
-```
-
-So each width offset receives:
-
-```text
-00 0A 00 00
-```
-
-and each height offset receives:
-
-```text
-A0 05 00 00
-```
-
-### Example: 1920×1080
-
-For `1920x1080`, write:
-
-```text
-1920 decimal = 0x00000780
-little endian = 80 07 00 00
-```
-
-and:
-
-```text
-1080 decimal = 0x00000438
-little endian = 38 04 00 00
-```
-
-## Patch part 2: Hor+ Direct3D horizontal clip range
-
-The original game uses a horizontal clip range equivalent to:
+Then it changes the horizontal clip range from:
 
 ```text
 -1.0 to +1.0
 ```
 
-That is represented by:
+to:
 
 ```text
-clip x     = -1.0
-clip width =  2.0
+-multiplier to +multiplier
 ```
 
-The working U-style widescreen patch changes this to approximately:
+The clip width becomes:
 
 ```text
--1.3333334 to +1.3333334
+2 × multiplier
 ```
 
-That is represented by:
+## Common examples
+
+| Target aspect ratio | Decimal aspect | Hor+ multiplier | Clip X | Clip width |
+|---:|---:|---:|---:|---:|
+| 4:3 | 1.333333 | 1.000000 | -1.000000 | 2.000000 |
+| 16:10 | 1.600000 | 1.200000 | -1.200000 | 2.400000 |
+| 16:9 | 1.777778 | 1.333333 | -1.333333 | 2.666667 |
+| 21:9 | 2.333333 | 1.750000 | -1.750000 | 3.500000 |
+| 32:9 | 3.555556 | 2.666667 | -2.666667 | 5.333333 |
+
+For 16:9, this reproduces the previously working U-style patch.
+
+## Modified locations in `rcskspel.dat`
+
+The patcher modifies four Direct3D horizontal clip setup instructions and one FPS limiter byte.
+
+The horizontal clip instructions are at these file offsets:
 
 ```text
-clip x     = -1.3333334
-clip width =  2.6666667
+0x0ACEBE
+0x0ACEE8
+0x0ACFBA
+0x0ACFC6
 ```
 
-This is the 4:3-to-16:9 horizontal expansion factor:
+The FPS limiter byte is at:
 
 ```text
-(16 / 9) / (4 / 3) = 1.3333333...
+0x043321
 ```
 
-The vertical values are intentionally left alone. This preserves the original vertical framing.
+These are file offsets, not virtual addresses.
 
-### Float constants
+## Direct3D clip patch details
 
-IEEE-754 little-endian bytes:
+The patcher verifies the first three bytes of each instruction, then replaces the 32-bit floating-point constant that follows.
+
+### 1. Default horizontal clip X
+
+File offset:
 
 ```text
--1.0       = 00 00 80 BF
--1.3333334 = AB AA AA BF
-
- 2.0       = 00 00 00 40
- 2.6666667 = AB AA 2A 40
+0x0ACEBE
 ```
 
-## Patch part 3: default horizontal clip setup
-
-At file offset:
+Instruction prefix:
 
 ```text
-0x0ACEBD
+C7 41 14
 ```
 
-replace:
+Original full instruction:
 
 ```text
 C7 41 14 00 00 80 BF
 ```
 
-with:
+This writes:
+
+```text
+-1.0
+```
+
+For 16:9, the replacement is:
 
 ```text
 C7 41 14 AB AA AA BF
 ```
 
-This changes the default horizontal clip X value from `-1.0` to approximately `-1.3333334`.
-
-At file offset:
+This writes approximately:
 
 ```text
-0x0ACEE7
+-1.3333334
 ```
 
-replace:
+For other aspect ratios, the patcher keeps `C7 41 14` and writes a different calculated float.
+
+### 2. Default horizontal clip width
+
+File offset:
+
+```text
+0x0ACEE8
+```
+
+Instruction prefix:
+
+```text
+C7 41 1C
+```
+
+Original full instruction:
 
 ```text
 C7 41 1C 00 00 00 40
 ```
 
-with:
+This writes:
+
+```text
+2.0
+```
+
+For 16:9, the replacement is:
 
 ```text
 C7 41 1C AB AA 2A 40
 ```
 
-This changes the default horizontal clip width from `2.0` to approximately `2.6666667`.
-
-## Patch part 4: runtime horizontal clip setup
-
-The game also sets clip values at runtime, so the same style of patch is applied to the runtime path.
-
-At file offset:
+This writes approximately:
 
 ```text
-0x0ACFB9
+2.6666667
 ```
 
-replace:
+### 3. Runtime horizontal clip X
+
+File offset:
+
+```text
+0x0ACFBA
+```
+
+Instruction prefix:
+
+```text
+C7 46 14
+```
+
+Original full instruction:
 
 ```text
 C7 46 14 00 00 80 BF
 ```
 
-with:
+For 16:9:
 
 ```text
 C7 46 14 AB AA AA BF
 ```
 
-At file offset:
+### 4. Runtime horizontal clip width
+
+File offset:
 
 ```text
-0x0ACFC5
+0x0ACFC6
 ```
 
-replace:
+Instruction prefix:
+
+```text
+C7 46 1C
+```
+
+Original full instruction:
 
 ```text
 C7 46 1C 00 00 00 40
 ```
 
-with:
+For 16:9:
 
 ```text
 C7 46 1C AB AA 2A 40
 ```
 
-The combination of the default and runtime clip patches is what matched the working **U** build.
+## Why both default and runtime paths are patched
 
-## Patch part 5: FPS unlock / 0 ms wait
+Earlier tests showed that patching only one path was not enough.
 
-The original game has a frame limiter that waits until about 25 ms have passed before allowing the next frame. This produces the default 31/32 FPS behavior.
+The game appears to set the Direct3D clip range both during setup and during runtime. The working U-style patch changed both paths. That is why the latest patcher writes four float constants instead of only two.
 
-The unlocked-FPS test build changed that wait threshold to `0 ms`.
+## FPS unlock
+
+The original game waits until about 25 ms have passed before allowing the next frame. This effectively locks the game around 31/32 FPS.
 
 At file offset:
 
@@ -273,19 +278,27 @@ At file offset:
 0x043321
 ```
 
-replace:
+the original byte is:
 
 ```text
 19
 ```
 
-with:
+`0x19` is decimal `25`.
+
+The patcher changes this to:
 
 ```text
 00
 ```
 
-`0x19` is decimal `25`, so this changes the limiter from:
+So the patch is:
+
+```text
+0x043321: 19 -> 00
+```
+
+This changes the limiter from:
 
 ```text
 25 ms
@@ -308,121 +321,136 @@ You can use:
 - x32dbg
 - Ghidra
 - IDA Free
-- CFF Explorer
 - PE-bear
+- CFF Explorer
 
 ### Step 1: back up the file
 
-Copy:
+Back up:
 
 ```text
 rcskspel.dat
 ```
 
-to something like:
+For example:
 
 ```text
 rcskspel_original_backup.dat
 ```
 
-Never patch your only copy.
+### Step 2: confirm the file is correct
 
-### Step 2: confirm it is the right file
-
-Open `rcskspel.dat` in a hex editor or PE tool.
-
-The file should begin with:
+Open `rcskspel.dat` in a hex editor. It should begin with:
 
 ```text
 MZ
 ```
 
-This means it is a Windows PE executable.
+That confirms it is a PE executable.
 
-### Step 3: patch the resolution table
+### Step 3: calculate the Hor+ values
 
-Choose your target resolution.
+Choose a target aspect ratio.
 
-For `2560x1440`:
-
-- write `00 0A 00 00` at each width offset;
-- write `A0 05 00 00` at each height offset.
-
-Width offsets:
+For 16:9:
 
 ```text
-0x0FE930
-0x0FE984
-0x0FE9FC
-0x0FEA9C
+targetAspect = 16 / 9 = 1.7777778
+baseAspect = 4 / 3 = 1.3333333
+multiplier = targetAspect / baseAspect = 1.3333333
+clipX = -1.3333333
+clipWidth = 2.6666667
 ```
 
-Height offsets:
+### Step 4: convert to little-endian float bytes
+
+Common examples:
 
 ```text
-0x0FE934
-0x0FE988
-0x0FEA00
-0x0FEAA0
+16:9:
+-1.3333334 = AB AA AA BF
+ 2.6666667 = AB AA 2A 40
+
+16:10:
+-1.2 = 9A 99 99 BF
+ 2.4 = 9A 99 19 40
+
+21:9:
+-1.75 = 00 00 E0 BF
+ 3.5  = 00 00 60 40
+
+32:9:
+-2.6666667 = AB AA 2A C0
+ 5.3333335 = AB AA AA 40
 ```
 
-### Step 4: patch the Hor+ clip values
+### Step 5: patch the four clip instructions
 
-Patch the default clip setup:
+At `0x0ACEBE`, keep the prefix and replace the float:
 
 ```text
-0x0ACEBD:
 C7 41 14 00 00 80 BF
-->
+```
+
+For 16:9:
+
+```text
 C7 41 14 AB AA AA BF
 ```
 
+At `0x0ACEE8`:
+
 ```text
-0x0ACEE7:
 C7 41 1C 00 00 00 40
-->
+```
+
+For 16:9:
+
+```text
 C7 41 1C AB AA 2A 40
 ```
 
-Patch the runtime clip setup:
+At `0x0ACFBA`:
 
 ```text
-0x0ACFB9:
 C7 46 14 00 00 80 BF
-->
+```
+
+For 16:9:
+
+```text
 C7 46 14 AB AA AA BF
 ```
 
+At `0x0ACFC6`:
+
 ```text
-0x0ACFC5:
 C7 46 1C 00 00 00 40
-->
+```
+
+For 16:9:
+
+```text
 C7 46 1C AB AA 2A 40
 ```
 
-### Step 5: patch the FPS limiter
+### Step 6: patch the FPS wait
 
-At file offset:
-
-```text
-0x043321
-```
-
-replace:
+At `0x043321`, change:
 
 ```text
 19
 ```
 
-with:
+to:
 
 ```text
 00
 ```
 
-### Step 6: save the file
+### Step 7: save
 
-Save the patched file as:
+Save the modified file as:
 
 ```text
 rcskspel.dat
@@ -434,17 +462,16 @@ Place it back in the game folder.
 
 ### Recommended tools
 
-Useful Linux tools:
+Useful Linux tools include:
 
 ```text
 python3
 xxd
 hexdump
-objdump
-Ghidra
-radare2 / rizin
 Bless Hex Editor
 Okteta
+Ghidra
+radare2 / rizin
 ```
 
 ### Step 1: back up the file
@@ -453,238 +480,216 @@ Okteta
 cp rcskspel.dat rcskspel_original_backup.dat
 ```
 
-### Step 2: patch with Python
+### Step 2: use a Python patch script
 
 Save this as:
 
 ```text
-patch_rcskspel_widescreen_fps.py
+patch_rcskspel_aspect_horplus_fps.py
 ```
 
 ```python
 from pathlib import Path
 import struct
 import sys
+import re
 
 if len(sys.argv) != 4:
-    print("Usage: python3 patch_rcskspel_widescreen_fps.py <input_rcskspel.dat> <output_rcskspel.dat> <width>x<height>")
+    print("Usage: python3 patch_rcskspel_aspect_horplus_fps.py <input_rcskspel.dat> <output_rcskspel.dat> <aspect>")
+    print("Example: python3 patch_rcskspel_aspect_horplus_fps.py rcskspel.dat rcskspel_16x9.dat 16:9")
     raise SystemExit(1)
 
 input_path = Path(sys.argv[1])
 output_path = Path(sys.argv[2])
-resolution = sys.argv[3].lower()
+aspect_text = sys.argv[3].strip().lower().replace(" ", "")
 
-width_text, height_text = resolution.split("x")
-width = int(width_text)
-height = int(height_text)
+def parse_aspect_ratio(text):
+    match = re.match(r"^([0-9]+(?:\.[0-9]+)?)(?:\:|/)([0-9]+(?:\.[0-9]+)?)$", text)
+    if match:
+        a = float(match.group(1))
+        b = float(match.group(2))
+        if b == 0:
+            raise ValueError("aspect ratio denominator cannot be zero")
+        return a / b
+    return float(text)
+
+target_aspect = parse_aspect_ratio(aspect_text)
+base_aspect = 4 / 3
+
+multiplier = target_aspect / base_aspect
+clip_x = -multiplier
+clip_width = multiplier * 2
 
 data = bytearray(input_path.read_bytes())
 
 if data[:2] != b"MZ":
     raise RuntimeError("Input file does not look like a Windows PE executable.")
 
-width_offsets = [
-    0x0FE930,
-    0x0FE984,
-    0x0FE9FC,
-    0x0FEA9C,
-]
-
-height_offsets = [
-    0x0FE934,
-    0x0FE988,
-    0x0FEA00,
-    0x0FEAA0,
-]
-
-for offset in width_offsets:
-    data[offset:offset + 4] = struct.pack("<I", width)
-
-for offset in height_offsets:
-    data[offset:offset + 4] = struct.pack("<I", height)
-
-def patch_bytes(offset, original, replacement, label):
-    current = data[offset:offset + len(replacement)]
-
-    if current == replacement:
-        return
-
-    if current != original:
+def patch_float(offset, prefix, value, label):
+    current_prefix = data[offset:offset + len(prefix)]
+    if current_prefix != prefix:
         raise RuntimeError(
-            f"{label}: unexpected bytes at 0x{offset:X}. "
+            f"{label}: unexpected instruction prefix at 0x{offset:X}. "
             "This may be the wrong rcskspel.dat version."
         )
+    data[offset + len(prefix):offset + len(prefix) + 4] = struct.pack("<f", value)
 
-    data[offset:offset + len(replacement)] = replacement
+patch_float(0x0ACEBE, bytes.fromhex("C7 41 14"), clip_x, "default horizontal clip x")
+patch_float(0x0ACEE8, bytes.fromhex("C7 41 1C"), clip_width, "default horizontal clip width")
+patch_float(0x0ACFBA, bytes.fromhex("C7 46 14"), clip_x, "runtime horizontal clip x")
+patch_float(0x0ACFC6, bytes.fromhex("C7 46 1C"), clip_width, "runtime horizontal clip width")
 
-# U-style Hor+ Direct3D horizontal clip patch.
-patch_bytes(
-    0x0ACEBD,
-    bytes.fromhex("C7 41 14 00 00 80 BF"),
-    bytes.fromhex("C7 41 14 AB AA AA BF"),
-    "default clip x",
-)
+if data[0x043321] not in (0x19, 0x00):
+    raise RuntimeError("Unexpected FPS wait byte at 0x043321.")
 
-patch_bytes(
-    0x0ACEE7,
-    bytes.fromhex("C7 41 1C 00 00 00 40"),
-    bytes.fromhex("C7 41 1C AB AA 2A 40"),
-    "default clip width",
-)
-
-patch_bytes(
-    0x0ACFB9,
-    bytes.fromhex("C7 46 14 00 00 80 BF"),
-    bytes.fromhex("C7 46 14 AB AA AA BF"),
-    "runtime clip x",
-)
-
-patch_bytes(
-    0x0ACFC5,
-    bytes.fromhex("C7 46 1C 00 00 00 40"),
-    bytes.fromhex("C7 46 1C AB AA 2A 40"),
-    "runtime clip width",
-)
-
-# FPS unlock:
-# 25 ms wait threshold -> 0 ms wait threshold.
-patch_bytes(
-    0x043321,
-    bytes.fromhex("19"),
-    bytes.fromhex("00"),
-    "FPS wait threshold",
-)
+data[0x043321] = 0x00
 
 output_path.write_bytes(data)
 
 print(f"Patched {input_path} -> {output_path}")
-print(f"Resolution: {width}x{height}")
-print("Applied Hor+ 16:9 correction.")
+print(f"Target aspect: {target_aspect:.6f}")
+print(f"Hor+ multiplier: {multiplier:.6f}")
+print(f"Clip X: {clip_x:.6f}")
+print(f"Clip width: {clip_width:.6f}")
 print("Applied 0 ms FPS unlock.")
 ```
 
-Run it like this:
+### Step 3: run the script
+
+For 16:9:
 
 ```bash
-python3 patch_rcskspel_widescreen_fps.py rcskspel.dat rcskspel_2560x1440_unlocked.dat 2560x1440
+python3 patch_rcskspel_aspect_horplus_fps.py rcskspel.dat rcskspel_16x9.dat 16:9
 ```
 
-Then install:
+For 21:9:
 
 ```bash
-cp rcskspel_2560x1440_unlocked.dat /path/to/game/rcskspel.dat
+python3 patch_rcskspel_aspect_horplus_fps.py rcskspel.dat rcskspel_21x9.dat 21:9
 ```
 
-### Step 3: verify with Python
+For 32:9:
 
-You can verify the display-mode table like this:
+```bash
+python3 patch_rcskspel_aspect_horplus_fps.py rcskspel.dat rcskspel_32x9.dat 32:9
+```
+
+Then install the result:
+
+```bash
+cp rcskspel_16x9.dat /path/to/game/rcskspel.dat
+```
+
+### Step 4: verify the patch
 
 ```python
 from pathlib import Path
 import struct
 
-data = Path("rcskspel_2560x1440_unlocked.dat").read_bytes()
+data = Path("rcskspel_16x9.dat").read_bytes()
 
-for offset in [0x0FE930, 0x0FE984, 0x0FE9FC, 0x0FEA9C]:
-    print(hex(offset), struct.unpack_from("<I", data, offset)[0])
+for offset, name in [
+    (0x0ACEBE, "default clip x"),
+    (0x0ACEE8, "default clip width"),
+    (0x0ACFBA, "runtime clip x"),
+    (0x0ACFC6, "runtime clip width"),
+]:
+    prefix = data[offset:offset+3]
+    value = struct.unpack("<f", data[offset+3:offset+7])[0]
+    print(hex(offset), name, prefix.hex(" "), value)
 
-for offset in [0x0FE934, 0x0FE988, 0x0FEA00, 0x0FEAA0]:
-    print(hex(offset), struct.unpack_from("<I", data, offset)[0])
+print("FPS wait byte:", data[0x043321])
 ```
 
-For `2560x1440`, the width offsets should print `2560`, and the height offsets should print `1440`.
+For 16:9, the values should be approximately:
 
-You can also check the clip and FPS bytes:
-
-```python
-from pathlib import Path
-
-data = Path("rcskspel_2560x1440_unlocked.dat").read_bytes()
-
-checks = {
-    0x0ACEBD: "C7 41 14 AB AA AA BF",
-    0x0ACEE7: "C7 41 1C AB AA 2A 40",
-    0x0ACFB9: "C7 46 14 AB AA AA BF",
-    0x0ACFC5: "C7 46 1C AB AA 2A 40",
-    0x043321: "00",
-}
-
-for offset, expected in checks.items():
-    actual = data[offset:offset + len(bytes.fromhex(expected))]
-    print(hex(offset), actual.hex(" ").upper(), "expected", expected)
+```text
+default clip x      -1.333333
+default clip width   2.666667
+runtime clip x      -1.333333
+runtime clip width   2.666667
+FPS wait byte        0
 ```
 
-## Adapting to other 16:9 resolutions
+## Building the Go patcher manually
 
-The Hor+ clip patch remains the same for common 16:9 resolutions.
+### Windows build
 
-Only the display-mode table values change.
+```bash
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o RedcatSuperkartsAspectRatioHorPlusFPSPatcher.exe RedcatSuperkartsAspectRatioHorPlusFPSPatcher.go
+```
 
-Examples:
+### Linux build
 
-| Resolution | Width bytes | Height bytes |
-|---:|---:|---:|
-| 1280×720 | `00 05 00 00` | `D0 02 00 00` |
-| 1600×900 | `40 06 00 00` | `84 03 00 00` |
-| 1920×1080 | `80 07 00 00` | `38 04 00 00` |
-| 2560×1440 | `00 0A 00 00` | `A0 05 00 00` |
-| 3840×2160 | `00 0F 00 00` | `70 08 00 00` |
-| 7680×4320 | `00 1E 00 00` | `E0 10 00 00` |
+```bash
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o RedcatSuperkartsAspectRatioHorPlusFPSPatcher_linux_x86_64 RedcatSuperkartsAspectRatioHorPlusFPSPatcher.go
+chmod +x RedcatSuperkartsAspectRatioHorPlusFPSPatcher_linux_x86_64
+```
 
 ## Troubleshooting
 
-### The game still opens at 800×600 or another old mode
+### The game is still stretched
 
-The mode table may not have been patched in all required places. Check all width and height offsets listed above.
+Make sure the aspect ratio you entered matches the actual output aspect ratio.
 
-### The 3D world is stretched
-
-Check the Hor+ clip patches. The horizontal clip constants must become:
+Examples:
 
 ```text
--1.3333334
-2.6666667
+1920x1080 -> 16:9
+2560x1440 -> 16:9
+3440x1440 -> about 2.3889:1
+5120x1440 -> 32:9
 ```
 
-The byte patterns should be:
+If the actual output aspect ratio does not match the patch, the image will not look correct.
+
+### The patcher says the instruction prefix does not match
+
+This usually means the file at the expected offset does not contain the expected instruction prefix.
+
+Possible causes:
+
+- different `rcskspel.dat` version;
+- already modified executable with different code at those locations;
+- different regional release;
+- patching the wrong file.
+
+Use a clean original `rcskspel.dat` when possible.
+
+### The game does not change resolution
+
+This patcher intentionally does not patch resolution values. It only patches aspect behavior and FPS.
+
+Use an external wrapper or renderer configuration if you need to force a specific output resolution.
+
+### FPS unlock causes gameplay issues
+
+The FPS unlock changes a 25 ms wait to 0 ms. On some old games, physics or input can be tied to frame timing.
+
+To restore the original frame limiter manually:
 
 ```text
-AB AA AA BF
-AB AA 2A 40
+0x043321: 00 -> 19
 ```
-
-### The image is vertically zoomed or cropped
-
-Do not patch the vertical clip range. Earlier tests showed that changing the vertical clip path caused a vertical zoom/crop effect.
-
-### HUD changes but the 3D world does not
-
-That means the wrong path was patched. The final working patch targets the Direct3D horizontal clip range, not just DirectDraw or HUD/overlay dimensions.
-
-### The game runs too fast or controls behave differently
-
-The FPS patch removes the 25 ms frame limiter. This is the same behavior as the working `0 ms` unlocked-FPS test build, but very old games can have physics or input code tied to frame timing.
-
-If needed, restore the original byte at `0x043321`:
-
-```text
-00 -> 19
-```
-
-to return to the original limiter.
 
 ## Final recommended patcher
 
 Use:
 
 ```text
-RedcatSuperkartsWidescreenFPSPatcher.exe
+RedcatSuperkartsAspectRatioHorPlusFPSPatcher.exe
 ```
 
-Run it from the game folder, enter a resolution such as:
+or on Linux:
 
 ```text
-2560x1440
+RedcatSuperkartsAspectRatioHorPlusFPSPatcher_linux_x86_64
 ```
 
-The patcher backs up the original file and writes a patched `rcskspel.dat` automatically.
+Run it from the game folder next to:
+
+```text
+rcskspel.dat
+```
+
+Enter the aspect ratio that matches your actual output display.
