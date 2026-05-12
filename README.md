@@ -1,5 +1,7 @@
 # Redcat Superkarts Aspect-Ratio Hor+ + FPS Unlock Patcher
 
+<img width="2560" height="1080" alt="Screenshot" src="https://github.com/user-attachments/assets/9f2fcd27-b026-44c6-855e-884638fe3804" />
+
 Note: In order to get a 16 by 9 picture, you will still need to use a wrapper like dgVoodoo2 to force the actual output resolution. On Linux you will need to use dgVoodoo2 together with DXVK.
 
 This is a Redcat Superkarts patcher for:
